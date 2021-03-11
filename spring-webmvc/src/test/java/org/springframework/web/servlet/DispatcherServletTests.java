@@ -127,7 +127,7 @@ public class DispatcherServletTests {
 		assertThat((FrameworkServlet.SERVLET_CONTEXT_PREFIX + "complex").equals(
 		complexDispatcherServlet.getServletContextAttributeName())).as("Correct attribute").isTrue();
 		assertThat(getServletContext().getAttribute(FrameworkServlet.SERVLET_CONTEXT_PREFIX + "complex") == null).as("Context not published").isTrue();
-
+		System.out.println(111);
 		simpleDispatcherServlet.destroy();
 		complexDispatcherServlet.destroy();
 	}
