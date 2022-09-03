@@ -22,8 +22,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-import javax.servlet.http.HttpServletRequest;
-
+import jakarta.servlet.http.HttpServletRequest;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 
@@ -67,6 +66,7 @@ public class ResourceUrlProvider implements ApplicationListener<ContextRefreshed
 
 	private boolean autodetect = true;
 
+
 	@Override
 	public void setApplicationContext(ApplicationContext applicationContext) throws BeansException {
 		this.applicationContext = applicationContext;
@@ -74,7 +74,7 @@ public class ResourceUrlProvider implements ApplicationListener<ContextRefreshed
 
 	/**
 	 * Configure a {@code UrlPathHelper} to use in
-	 * {@link #getForRequestUrl(javax.servlet.http.HttpServletRequest, String)}
+	 * {@link #getForRequestUrl(jakarta.servlet.http.HttpServletRequest, String)}
 	 * in order to derive the lookup path for a target request URL path.
 	 */
 	public void setUrlPathHelper(UrlPathHelper urlPathHelper) {
@@ -134,6 +134,7 @@ public class ResourceUrlProvider implements ApplicationListener<ContextRefreshed
 		return this.autodetect;
 	}
 
+
 	@Override
 	public void onApplicationEvent(ContextRefreshedEvent event) {
 		if (event.getApplicationContext() == this.applicationContext && isAutodetect()) {
@@ -145,7 +146,6 @@ public class ResourceUrlProvider implements ApplicationListener<ContextRefreshed
 		}
 	}
 
-
 	protected void detectResourceHandlers(ApplicationContext appContext) {
 		Map<String, SimpleUrlHandlerMapping> beans = appContext.getBeansOfType(SimpleUrlHandlerMapping.class);
 		List<SimpleUrlHandlerMapping> mappings = new ArrayList<>(beans.values());
@@ -154,8 +154,7 @@ public class ResourceUrlProvider implements ApplicationListener<ContextRefreshed
 		for (SimpleUrlHandlerMapping mapping : mappings) {
 			for (String pattern : mapping.getHandlerMap().keySet()) {
 				Object handler = mapping.getHandlerMap().get(pattern);
-				if (handler instanceof ResourceHttpRequestHandler) {
-					ResourceHttpRequestHandler resourceHandler = (ResourceHttpRequestHandler) handler;
+				if (handler instanceof ResourceHttpRequestHandler resourceHandler) {
 					this.handlerMap.put(pattern, resourceHandler);
 				}
 			}
@@ -225,7 +224,6 @@ public class ResourceUrlProvider implements ApplicationListener<ContextRefreshed
 	 */
 	@Nullable
 	public final String getForLookupPath(String lookupPath) {
-
 		// Clean duplicate slashes or pathWithinPattern won't match lookupPath
 		String previous;
 		do {

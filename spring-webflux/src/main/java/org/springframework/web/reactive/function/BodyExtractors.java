@@ -137,6 +137,9 @@ public abstract class BodyExtractors {
 
 	/**
 	 * Extractor to read multipart data into a {@code MultiValueMap<String, Part>}.
+	 * <p><strong>Note:</strong> that resources used for part handling,
+	 * like storage for the uploaded files, is not deleted automatically, but
+	 * should be done via {@link Part#delete()}.
 	 * @return {@code BodyExtractor} for multipart data
 	 */
 	// Parameterized for server-side use
@@ -151,6 +154,9 @@ public abstract class BodyExtractors {
 
 	/**
 	 * Extractor to read multipart data into {@code Flux<Part>}.
+	 * <p><strong>Note:</strong> that resources used for part handling,
+	 * like storage for the uploaded files, is not deleted automatically, but
+	 * should be done via {@link Part#delete()}.
 	 * @return {@code BodyExtractor} for multipart request parts
 	 */
 	// Parameterized for server-side use
@@ -224,7 +230,7 @@ public abstract class BodyExtractors {
 
 		Flux<T> result;
 		if (message.getHeaders().getContentType() == null) {
-			// Maybe it's okay there is no content type, if there is no content..
+			// Maybe it's okay there is no content type, if there is no content.
 			result = message.getBody().map(buffer -> {
 				DataBufferUtils.release(buffer);
 				throw ex;

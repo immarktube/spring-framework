@@ -57,11 +57,11 @@ public class ResourceUrlProvider implements ApplicationListener<ContextRefreshed
 
 	private static final Log logger = LogFactory.getLog(ResourceUrlProvider.class);
 
-
 	private final Map<PathPattern, ResourceWebHandler> handlerMap = new LinkedHashMap<>();
 
 	@Nullable
 	private ApplicationContext applicationContext;
+
 
 	@Override
 	public void setApplicationContext(ApplicationContext applicationContext) throws BeansException {
@@ -106,8 +106,7 @@ public class ResourceUrlProvider implements ApplicationListener<ContextRefreshed
 
 		mappings.forEach(mapping ->
 			mapping.getHandlerMap().forEach((pattern, handler) -> {
-				if (handler instanceof ResourceWebHandler) {
-					ResourceWebHandler resourceHandler = (ResourceWebHandler) handler;
+				if (handler instanceof ResourceWebHandler resourceHandler) {
 					this.handlerMap.put(pattern, resourceHandler);
 				}
 			}));

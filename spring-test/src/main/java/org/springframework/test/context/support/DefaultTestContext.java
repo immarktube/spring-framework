@@ -1,5 +1,5 @@
 /*
- * Copyright 2002-2020 the original author or authors.
+ * Copyright 2002-2022 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -122,16 +122,15 @@ public class DefaultTestContext implements TestContext {
 	@Override
 	public ApplicationContext getApplicationContext() {
 		ApplicationContext context = this.cacheAwareContextLoaderDelegate.loadContext(this.mergedContextConfiguration);
-		if (context instanceof ConfigurableApplicationContext) {
-			@SuppressWarnings("resource")
-			ConfigurableApplicationContext cac = (ConfigurableApplicationContext) context;
-			Assert.state(cac.isActive(), () ->
-					"The ApplicationContext loaded for [" + this.mergedContextConfiguration +
-					"] is not active. This may be due to one of the following reasons: " +
-					"1) the context was closed programmatically by user code; " +
-					"2) the context was closed during parallel test execution either " +
-					"according to @DirtiesContext semantics or due to automatic eviction " +
-					"from the ContextCache due to a maximum cache size policy.");
+		if (context instanceof ConfigurableApplicationContext cac) {
+			Assert.state(cac.isActive(), () -> """
+					The ApplicationContext loaded for %s is not active. \
+					This may be due to one of the following reasons: \
+					1) the context was closed programmatically by user code; \
+					2) the context was closed during parallel test execution either \
+					according to @DirtiesContext semantics or due to automatic eviction \
+					from the ContextCache due to a maximum cache size policy."""
+						.formatted(this.mergedContextConfiguration));
 		}
 		return context;
 	}
@@ -208,7 +207,7 @@ public class DefaultTestContext implements TestContext {
 		Assert.notNull(computeFunction, "Compute function must not be null");
 		Object value = this.attributes.computeIfAbsent(name, computeFunction);
 		Assert.state(value != null,
-				() -> String.format("Compute function must not return null for attribute named '%s'", name));
+				() -> "Compute function must not return null for attribute named '%s'".formatted(name));
 		return (T) value;
 	}
 

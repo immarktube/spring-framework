@@ -1,5 +1,5 @@
 /*
- * Copyright 2002-2021 the original author or authors.
+ * Copyright 2002-2022 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,11 +19,10 @@ package org.springframework.web.servlet.function.support;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
-import java.util.Map;
+import java.util.stream.Collectors;
 
-import javax.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletRequest;
 
-import org.springframework.beans.factory.BeanFactoryUtils;
 import org.springframework.beans.factory.InitializingBean;
 import org.springframework.context.ApplicationContext;
 import org.springframework.core.SpringProperties;
@@ -34,10 +33,12 @@ import org.springframework.http.converter.support.AllEncompassingFormHttpMessage
 import org.springframework.http.converter.xml.SourceHttpMessageConverter;
 import org.springframework.lang.Nullable;
 import org.springframework.util.CollectionUtils;
+import org.springframework.web.servlet.function.HandlerFunction;
 import org.springframework.web.servlet.function.RouterFunction;
 import org.springframework.web.servlet.function.RouterFunctions;
 import org.springframework.web.servlet.function.ServerRequest;
 import org.springframework.web.servlet.handler.AbstractHandlerMapping;
+import org.springframework.web.util.pattern.PathPattern;
 import org.springframework.web.util.pattern.PathPatternParser;
 
 /**
@@ -50,6 +51,7 @@ import org.springframework.web.util.pattern.PathPatternParser;
  *
  * @author Arjen Poutsma
  * @author Sebastien Deleuze
+ * @author Brian Clozel
  * @since 5.2
  */
 public class RouterFunctionMapping extends AbstractHandlerMapping implements InitializingBean {
@@ -70,7 +72,6 @@ public class RouterFunctionMapping extends AbstractHandlerMapping implements Ini
 	private boolean detectHandlerFunctionsInAncestorContexts = false;
 
 
-
 	/**
 	 * Create an empty {@code RouterFunctionMapping}.
 	 * <p>If this constructor is used, this mapping will detect all
@@ -87,6 +88,7 @@ public class RouterFunctionMapping extends AbstractHandlerMapping implements Ini
 	public RouterFunctionMapping(RouterFunction<?> routerFunction) {
 		this.routerFunction = routerFunction;
 	}
+
 
 	/**
 	 * Set the router function to map to.
@@ -108,6 +110,10 @@ public class RouterFunctionMapping extends AbstractHandlerMapping implements Ini
 		return this.routerFunction;
 	}
 
+	/**
+	 * Set the message body converters to use.
+	 * <p>These converters are used to convert from and to HTTP requests and responses.
+	 */
 	public void setMessageConverters(List<HttpMessageConverter<?>> messageConverters) {
 		this.messageConverters = messageConverters;
 	}
@@ -124,10 +130,11 @@ public class RouterFunctionMapping extends AbstractHandlerMapping implements Ini
 		this.detectHandlerFunctionsInAncestorContexts = detectHandlerFunctionsInAncestorContexts;
 	}
 
+
 	@Override
 	public void afterPropertiesSet() throws Exception {
 		if (this.routerFunction == null) {
-			initRouterFunction();
+			initRouterFunctions();
 		}
 		if (CollectionUtils.isEmpty(this.messageConverters)) {
 			initMessageConverters();
@@ -143,23 +150,26 @@ public class RouterFunctionMapping extends AbstractHandlerMapping implements Ini
 	}
 
 	/**
-	 * Detect a all {@linkplain RouterFunction router functions} in the
-	 * current application context.
+	 * Detect all {@linkplain RouterFunction router functions} in the current
+	 * application context.
 	 */
-	@SuppressWarnings({"rawtypes", "unchecked"})
-	private void initRouterFunction() {
-		ApplicationContext applicationContext = obtainApplicationContext();
-		Map<String, RouterFunction> beans =
-				(this.detectHandlerFunctionsInAncestorContexts ?
-						BeanFactoryUtils.beansOfTypeIncludingAncestors(applicationContext, RouterFunction.class) :
-						applicationContext.getBeansOfType(RouterFunction.class));
-		List<RouterFunction> routerFunctions = new ArrayList<>(beans.values());
+	private void initRouterFunctions() {
+		List<RouterFunction<?>> routerFunctions = obtainApplicationContext()
+				.getBeanProvider(RouterFunction.class)
+				.orderedStream()
+				.map(router -> (RouterFunction<?>) router)
+				.collect(Collectors.toList());
+
+		ApplicationContext parentContext = obtainApplicationContext().getParent();
+		if (parentContext != null && !this.detectHandlerFunctionsInAncestorContexts) {
+			parentContext.getBeanProvider(RouterFunction.class).stream().forEach(routerFunctions::remove);
+		}
+
 		this.routerFunction = routerFunctions.stream().reduce(RouterFunction::andOther).orElse(null);
 		logRouterFunctions(routerFunctions);
 	}
 
-	@SuppressWarnings("rawtypes")
-	private void logRouterFunctions(List<RouterFunction> routerFunctions) {
+	private void logRouterFunctions(List<RouterFunction<?>> routerFunctions) {
 		if (mappingsLogger.isDebugEnabled()) {
 			routerFunctions.forEach(function -> mappingsLogger.debug("Mapped " + function));
 		}
@@ -201,21 +211,31 @@ public class RouterFunctionMapping extends AbstractHandlerMapping implements Ini
 		this.messageConverters = messageConverters;
 	}
 
-	@Nullable
+
 	@Override
+	@Nullable
 	protected Object getHandlerInternal(HttpServletRequest servletRequest) throws Exception {
 		if (this.routerFunction != null) {
 			ServerRequest request = ServerRequest.create(servletRequest, this.messageConverters);
-			setAttributes(servletRequest, request);
-			return this.routerFunction.route(request).orElse(null);
+			HandlerFunction<?> handlerFunction = this.routerFunction.route(request).orElse(null);
+			setAttributes(servletRequest, request, handlerFunction);
+			return handlerFunction;
 		}
 		else {
 			return null;
 		}
 	}
 
-	private void setAttributes(HttpServletRequest servletRequest, ServerRequest request) {
-		servletRequest.removeAttribute(RouterFunctions.MATCHING_PATTERN_ATTRIBUTE);
+	private void setAttributes(HttpServletRequest servletRequest, ServerRequest request,
+			@Nullable HandlerFunction<?> handlerFunction) {
+
+		PathPattern matchingPattern =
+				(PathPattern) servletRequest.getAttribute(RouterFunctions.MATCHING_PATTERN_ATTRIBUTE);
+		if (matchingPattern != null) {
+			servletRequest.removeAttribute(RouterFunctions.MATCHING_PATTERN_ATTRIBUTE);
+			servletRequest.setAttribute(BEST_MATCHING_PATTERN_ATTRIBUTE, matchingPattern.getPatternString());
+		}
+		servletRequest.setAttribute(BEST_MATCHING_HANDLER_ATTRIBUTE, handlerFunction);
 		servletRequest.setAttribute(RouterFunctions.REQUEST_ATTRIBUTE, request);
 	}
 

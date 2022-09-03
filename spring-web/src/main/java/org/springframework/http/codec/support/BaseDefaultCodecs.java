@@ -1,5 +1,5 @@
 /*
- * Copyright 2002-2021 the original author or authors.
+ * Copyright 2002-2022 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -33,6 +33,8 @@ import org.springframework.core.codec.DataBufferDecoder;
 import org.springframework.core.codec.DataBufferEncoder;
 import org.springframework.core.codec.Decoder;
 import org.springframework.core.codec.Encoder;
+import org.springframework.core.codec.Netty5BufferDecoder;
+import org.springframework.core.codec.Netty5BufferEncoder;
 import org.springframework.core.codec.NettyByteBufDecoder;
 import org.springframework.core.codec.NettyByteBufEncoder;
 import org.springframework.core.codec.ResourceDecoder;
@@ -58,7 +60,7 @@ import org.springframework.http.codec.json.KotlinSerializationJsonEncoder;
 import org.springframework.http.codec.multipart.DefaultPartHttpMessageReader;
 import org.springframework.http.codec.multipart.MultipartHttpMessageReader;
 import org.springframework.http.codec.multipart.MultipartHttpMessageWriter;
-import org.springframework.http.codec.multipart.SynchronossPartHttpMessageReader;
+import org.springframework.http.codec.multipart.PartEventHttpMessageReader;
 import org.springframework.http.codec.protobuf.ProtobufDecoder;
 import org.springframework.http.codec.protobuf.ProtobufEncoder;
 import org.springframework.http.codec.protobuf.ProtobufHttpMessageWriter;
@@ -96,6 +98,8 @@ class BaseDefaultCodecs implements CodecConfigurer.DefaultCodecs, CodecConfigure
 
 	static final boolean nettyByteBufPresent;
 
+	static final boolean netty5BufferPresent;
+
 	static final boolean kotlinSerializationJsonPresent;
 
 	static {
@@ -103,10 +107,11 @@ class BaseDefaultCodecs implements CodecConfigurer.DefaultCodecs, CodecConfigure
 		jackson2Present = ClassUtils.isPresent("com.fasterxml.jackson.databind.ObjectMapper", classLoader) &&
 						ClassUtils.isPresent("com.fasterxml.jackson.core.JsonGenerator", classLoader);
 		jackson2SmilePresent = ClassUtils.isPresent("com.fasterxml.jackson.dataformat.smile.SmileFactory", classLoader);
-		jaxb2Present = ClassUtils.isPresent("javax.xml.bind.Binder", classLoader);
+		jaxb2Present = ClassUtils.isPresent("jakarta.xml.bind.Binder", classLoader);
 		protobufPresent = ClassUtils.isPresent("com.google.protobuf.Message", classLoader);
 		synchronossMultipartPresent = ClassUtils.isPresent("org.synchronoss.cloud.nio.multipart.NioMultipartParser", classLoader);
 		nettyByteBufPresent = ClassUtils.isPresent("io.netty.buffer.ByteBuf", classLoader);
+		netty5BufferPresent = ClassUtils.isPresent("io.netty5.buffer.api.Buffer", classLoader);
 		kotlinSerializationJsonPresent = ClassUtils.isPresent("kotlinx.serialization.json.Json", classLoader);
 	}
 
@@ -221,6 +226,7 @@ class BaseDefaultCodecs implements CodecConfigurer.DefaultCodecs, CodecConfigure
 	public void jackson2JsonEncoder(Encoder<?> encoder) {
 		this.jackson2JsonEncoder = encoder;
 		initObjectWriters();
+		initTypedWriters();
 	}
 
 	@Override
@@ -233,6 +239,7 @@ class BaseDefaultCodecs implements CodecConfigurer.DefaultCodecs, CodecConfigure
 	public void jackson2SmileEncoder(Encoder<?> encoder) {
 		this.jackson2SmileEncoder = encoder;
 		initObjectWriters();
+		initTypedWriters();
 	}
 
 	@Override
@@ -342,6 +349,9 @@ class BaseDefaultCodecs implements CodecConfigurer.DefaultCodecs, CodecConfigure
 		if (nettyByteBufPresent) {
 			addCodec(this.typedReaders, new DecoderHttpMessageReader<>(new NettyByteBufDecoder()));
 		}
+		if (netty5BufferPresent) {
+			addCodec(this.typedReaders, new DecoderHttpMessageReader<>(new Netty5BufferDecoder()));
+		}
 		addCodec(this.typedReaders, new ResourceHttpMessageReader(new ResourceDecoder()));
 		addCodec(this.typedReaders, new DecoderHttpMessageReader<>(StringDecoder.textPlainOnly()));
 		if (protobufPresent) {
@@ -415,10 +425,8 @@ class BaseDefaultCodecs implements CodecConfigurer.DefaultCodecs, CodecConfigure
 			if (codec instanceof DefaultPartHttpMessageReader) {
 				((DefaultPartHttpMessageReader) codec).setMaxInMemorySize(size);
 			}
-			if (synchronossMultipartPresent) {
-				if (codec instanceof SynchronossPartHttpMessageReader) {
-					((SynchronossPartHttpMessageReader) codec).setMaxInMemorySize(size);
-				}
+			if (codec instanceof PartEventHttpMessageReader) {
+				((PartEventHttpMessageReader) codec).setMaxInMemorySize(size);
 			}
 		}
 
@@ -433,10 +441,8 @@ class BaseDefaultCodecs implements CodecConfigurer.DefaultCodecs, CodecConfigure
 			if (codec instanceof DefaultPartHttpMessageReader) {
 				((DefaultPartHttpMessageReader) codec).setEnableLoggingRequestDetails(enable);
 			}
-			if (synchronossMultipartPresent) {
-				if (codec instanceof SynchronossPartHttpMessageReader) {
-					((SynchronossPartHttpMessageReader) codec).setEnableLoggingRequestDetails(enable);
-				}
+			if (codec instanceof PartEventHttpMessageReader) {
+				((PartEventHttpMessageReader) codec).setEnableLoggingRequestDetails(enable);
 			}
 			if (codec instanceof FormHttpMessageWriter) {
 				((FormHttpMessageWriter) codec).setEnableLoggingRequestDetails(enable);
@@ -558,6 +564,9 @@ class BaseDefaultCodecs implements CodecConfigurer.DefaultCodecs, CodecConfigure
 		addCodec(writers, new EncoderHttpMessageWriter<>(new DataBufferEncoder()));
 		if (nettyByteBufPresent) {
 			addCodec(writers, new EncoderHttpMessageWriter<>(new NettyByteBufEncoder()));
+		}
+		if (netty5BufferPresent) {
+			addCodec(writers, new EncoderHttpMessageWriter<>(new Netty5BufferEncoder()));
 		}
 		addCodec(writers, new ResourceHttpMessageWriter());
 		addCodec(writers, new EncoderHttpMessageWriter<>(CharSequenceEncoder.textPlainOnly()));

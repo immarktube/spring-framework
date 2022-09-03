@@ -1,5 +1,5 @@
 /*
- * Copyright 2002-2020 the original author or authors.
+ * Copyright 2002-2022 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -25,13 +25,17 @@ import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 
 import org.springframework.beans.BeanUtils;
+import org.springframework.core.SpringProperties;
 import org.springframework.lang.Nullable;
 import org.springframework.test.context.TestContextAnnotationUtils.AnnotationDescriptor;
 import org.springframework.util.ClassUtils;
+import org.springframework.util.StringUtils;
 
 /**
  * {@code BootstrapUtils} is a collection of utility methods to assist with
  * bootstrapping the <em>Spring TestContext Framework</em>.
+ *
+ * <p>Only intended for internal use.
  *
  * @author Sam Brannen
  * @author Phillip Webb
@@ -40,7 +44,7 @@ import org.springframework.util.ClassUtils;
  * @see BootstrapContext
  * @see TestContextBootstrapper
  */
-abstract class BootstrapUtils {
+public abstract class BootstrapUtils {
 
 	private static final String DEFAULT_BOOTSTRAP_CONTEXT_CLASS_NAME =
 			"org.springframework.test.context.support.DefaultBootstrapContext";
@@ -65,7 +69,11 @@ abstract class BootstrapUtils {
 	/**
 	 * Create the {@code BootstrapContext} for the specified {@linkplain Class test class}.
 	 * <p>Uses reflection to create a {@link org.springframework.test.context.support.DefaultBootstrapContext}
-	 * that uses a {@link org.springframework.test.context.cache.DefaultCacheAwareContextLoaderDelegate}.
+	 * that uses a default {@link CacheAwareContextLoaderDelegate} &mdash; configured
+	 * via the {@link CacheAwareContextLoaderDelegate#DEFAULT_CACHE_AWARE_CONTEXT_LOADER_DELEGATE_PROPERTY_NAME}
+	 * system property or falling back to the
+	 * {@link org.springframework.test.context.cache.DefaultCacheAwareContextLoaderDelegate}
+	 * if the system property is not defined.
 	 * @param testClass the test class for which the bootstrap context should be created
 	 * @return a new {@code BootstrapContext}; never {@code null}
 	 */
@@ -90,20 +98,43 @@ abstract class BootstrapUtils {
 
 	@SuppressWarnings("unchecked")
 	private static CacheAwareContextLoaderDelegate createCacheAwareContextLoaderDelegate() {
-		Class<? extends CacheAwareContextLoaderDelegate> clazz = null;
+		String className = SpringProperties.getProperty(
+				CacheAwareContextLoaderDelegate.DEFAULT_CACHE_AWARE_CONTEXT_LOADER_DELEGATE_PROPERTY_NAME);
+		className = (StringUtils.hasText(className) ? className.trim() :
+				DEFAULT_CACHE_AWARE_CONTEXT_LOADER_DELEGATE_CLASS_NAME);
 		try {
-			clazz = (Class<? extends CacheAwareContextLoaderDelegate>) ClassUtils.forName(
-				DEFAULT_CACHE_AWARE_CONTEXT_LOADER_DELEGATE_CLASS_NAME, BootstrapUtils.class.getClassLoader());
-
+			Class<? extends CacheAwareContextLoaderDelegate> clazz =
+					(Class<? extends CacheAwareContextLoaderDelegate>) ClassUtils.forName(
+						className, BootstrapUtils.class.getClassLoader());
 			if (logger.isDebugEnabled()) {
-				logger.debug(String.format("Instantiating CacheAwareContextLoaderDelegate from class [%s]",
-					clazz.getName()));
+				logger.debug(String.format("Instantiating CacheAwareContextLoaderDelegate from class [%s]", className));
 			}
 			return BeanUtils.instantiateClass(clazz, CacheAwareContextLoaderDelegate.class);
 		}
 		catch (Throwable ex) {
-			throw new IllegalStateException("Could not load CacheAwareContextLoaderDelegate [" + clazz + "]", ex);
+			throw new IllegalStateException("Could not create CacheAwareContextLoaderDelegate [" + className + "]", ex);
 		}
+	}
+
+	/**
+	 * Resolve the {@link TestContextBootstrapper} type for the supplied test class
+	 * using the default {@link BootstrapContext}, instantiate the bootstrapper,
+	 * and provide it a reference to the {@code BootstrapContext}.
+	 * <p>If the {@link BootstrapWith @BootstrapWith} annotation is present on
+	 * the test class, either directly or as a meta-annotation, then its
+	 * {@link BootstrapWith#value value} will be used as the bootstrapper type.
+	 * Otherwise, either the
+	 * {@link org.springframework.test.context.support.DefaultTestContextBootstrapper
+	 * DefaultTestContextBootstrapper} or the
+	 * {@link org.springframework.test.context.web.WebTestContextBootstrapper
+	 * WebTestContextBootstrapper} will be used, depending on the presence of
+	 * {@link org.springframework.test.context.web.WebAppConfiguration @WebAppConfiguration}.
+	 * @param testClass the test class for which the bootstrapper should be created
+	 * @return a fully configured {@code TestContextBootstrapper}
+	 * @since 6.0
+	 */
+	public static TestContextBootstrapper resolveTestContextBootstrapper(Class<?> testClass) {
+		return resolveTestContextBootstrapper(createBootstrapContext(testClass));
 	}
 
 	/**
