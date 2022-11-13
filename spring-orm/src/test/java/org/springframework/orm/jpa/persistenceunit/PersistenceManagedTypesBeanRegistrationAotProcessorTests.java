@@ -17,13 +17,16 @@
 package org.springframework.orm.jpa.persistenceunit;
 
 import java.util.function.BiConsumer;
+import java.util.function.Consumer;
 
 import javax.sql.DataSource;
 
 import org.junit.jupiter.api.Test;
 
-import org.springframework.aot.test.generator.compile.Compiled;
-import org.springframework.aot.test.generator.compile.TestCompiler;
+import org.springframework.aot.hint.MemberCategory;
+import org.springframework.aot.hint.RuntimeHints;
+import org.springframework.aot.hint.predicate.RuntimeHintsPredicates;
+import org.springframework.aot.test.generate.TestGenerationContext;
 import org.springframework.context.ApplicationContextInitializer;
 import org.springframework.context.annotation.AnnotationConfigApplicationContext;
 import org.springframework.context.annotation.Bean;
@@ -31,11 +34,17 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.context.aot.ApplicationContextAotGenerator;
 import org.springframework.context.support.GenericApplicationContext;
 import org.springframework.core.io.ResourceLoader;
-import org.springframework.core.testfixture.aot.generate.TestGenerationContext;
+import org.springframework.core.test.tools.Compiled;
+import org.springframework.core.test.tools.TestCompiler;
 import org.springframework.orm.jpa.JpaVendorAdapter;
 import org.springframework.orm.jpa.LocalContainerEntityManagerFactoryBean;
 import org.springframework.orm.jpa.domain.DriversLicense;
+import org.springframework.orm.jpa.domain.Employee;
+import org.springframework.orm.jpa.domain.EmployeeId;
+import org.springframework.orm.jpa.domain.EmployeeLocation;
+import org.springframework.orm.jpa.domain.EmployeeLocationConverter;
 import org.springframework.orm.jpa.domain.Person;
+import org.springframework.orm.jpa.domain.PersonListener;
 import org.springframework.orm.jpa.vendor.Database;
 import org.springframework.orm.jpa.vendor.HibernateJpaVendorAdapter;
 
@@ -46,6 +55,7 @@ import static org.mockito.Mockito.mock;
  * Tests for {@link PersistenceManagedTypesBeanRegistrationAotProcessor}.
  *
  * @author Stephane Nicoll
+ * @author Sebastien Deleuze
  */
 class PersistenceManagedTypesBeanRegistrationAotProcessorTests {
 
@@ -59,10 +69,37 @@ class PersistenceManagedTypesBeanRegistrationAotProcessorTests {
 			PersistenceManagedTypes persistenceManagedTypes = freshApplicationContext.getBean(
 					"persistenceManagedTypes", PersistenceManagedTypes.class);
 			assertThat(persistenceManagedTypes.getManagedClassNames()).containsExactlyInAnyOrder(
-					DriversLicense.class.getName(), Person.class.getName());
+					DriversLicense.class.getName(), Person.class.getName(), Employee.class.getName(),
+					EmployeeLocationConverter.class.getName());
 			assertThat(persistenceManagedTypes.getManagedPackages()).isEmpty();
 			assertThat(freshApplicationContext.getBean(
 					EntityManagerWithPackagesToScanConfiguration.class).scanningInvoked).isFalse();
+		});
+	}
+
+	@Test
+	void contributeHints() {
+		GenericApplicationContext context = new AnnotationConfigApplicationContext();
+		context.registerBean(EntityManagerWithPackagesToScanConfiguration.class);
+		contributeHints(context, hints -> {
+			assertThat(RuntimeHintsPredicates.reflection().onType(DriversLicense.class)
+					.withMemberCategories(MemberCategory.DECLARED_FIELDS)).accepts(hints);
+			assertThat(RuntimeHintsPredicates.reflection().onType(Person.class)
+					.withMemberCategories(MemberCategory.DECLARED_FIELDS)).accepts(hints);
+			assertThat(RuntimeHintsPredicates.reflection().onType(PersonListener.class)
+					.withMemberCategories(MemberCategory.INVOKE_DECLARED_CONSTRUCTORS, MemberCategory.INVOKE_PUBLIC_METHODS))
+					.accepts(hints);
+			assertThat(RuntimeHintsPredicates.reflection().onType(Employee.class)
+					.withMemberCategories(MemberCategory.DECLARED_FIELDS)).accepts(hints);
+			assertThat(RuntimeHintsPredicates.reflection().onMethod(Employee.class, "preRemove"))
+					.accepts(hints);
+			assertThat(RuntimeHintsPredicates.reflection().onType(EmployeeId.class)
+					.withMemberCategories(MemberCategory.DECLARED_FIELDS)).accepts(hints);
+			assertThat(RuntimeHintsPredicates.reflection().onType(EmployeeLocationConverter.class)
+					.withMemberCategories(MemberCategory.INVOKE_DECLARED_CONSTRUCTORS, MemberCategory.INVOKE_PUBLIC_METHODS))
+					.accepts(hints);
+			assertThat(RuntimeHintsPredicates.reflection().onType(EmployeeLocation.class)
+					.withMemberCategories(MemberCategory.DECLARED_FIELDS)).accepts(hints);
 		});
 	}
 
@@ -74,7 +111,7 @@ class PersistenceManagedTypesBeanRegistrationAotProcessorTests {
 		TestGenerationContext generationContext = new TestGenerationContext();
 		generator.processAheadOfTime(applicationContext, generationContext);
 		generationContext.writeGeneratedContent();
-		TestCompiler.forSystem().withFiles(generationContext.getGeneratedFiles()).compile(compiled ->
+		TestCompiler.forSystem().with(generationContext).compile(compiled ->
 				result.accept(compiled.getInstance(ApplicationContextInitializer.class), compiled));
 	}
 
@@ -84,6 +121,13 @@ class PersistenceManagedTypesBeanRegistrationAotProcessorTests {
 		initializer.initialize(freshApplicationContext);
 		freshApplicationContext.refresh();
 		return freshApplicationContext;
+	}
+
+	private void contributeHints(GenericApplicationContext applicationContext, Consumer<RuntimeHints> result) {
+		ApplicationContextAotGenerator generator = new ApplicationContextAotGenerator();
+		TestGenerationContext generationContext = new TestGenerationContext();
+		generator.processAheadOfTime(applicationContext, generationContext);
+		result.accept(generationContext.getRuntimeHints());
 	}
 
 	@Configuration(proxyBeanMethods = false)

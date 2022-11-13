@@ -90,7 +90,7 @@ class ServletServerHttpRequest extends AbstractServerHttpRequest {
 		super(initUri(request), request.getContextPath() + servletPath, initHeaders(headers, request));
 
 		Assert.notNull(bufferFactory, "'bufferFactory' must not be null");
-		Assert.isTrue(bufferSize > 0, "'bufferSize' must be higher than 0");
+		Assert.isTrue(bufferSize > 0, "'bufferSize' must be greater than 0");
 
 		this.request = request;
 		this.bufferFactory = bufferFactory;
@@ -162,12 +162,6 @@ class ServletServerHttpRequest extends AbstractServerHttpRequest {
 	@Override
 	public HttpMethod getMethod() {
 		return HttpMethod.valueOf(this.request.getMethod());
-	}
-
-	@Override
-	@Deprecated
-	public String getMethodValue() {
-		return this.request.getMethod();
 	}
 
 	@Override

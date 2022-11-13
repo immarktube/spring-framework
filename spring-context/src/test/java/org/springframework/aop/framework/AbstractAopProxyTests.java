@@ -97,12 +97,12 @@ public abstract class AbstractAopProxyTests {
 	 * to ensure that it was used appropriately by code.
 	 */
 	@BeforeEach
-	public void setUp() {
+	public void reset() {
 		mockTargetSource.reset();
 	}
 
 	@AfterEach
-	public void tearDown() {
+	public void verify() {
 		mockTargetSource.verify();
 	}
 
@@ -121,16 +121,6 @@ public abstract class AbstractAopProxyTests {
 		return false;
 	}
 
-
-	@Test
-	public void testNoInterceptorsAndNoTarget() {
-		assertThatExceptionOfType(AopConfigException.class).isThrownBy(() -> {
-				AdvisedSupport pc = new AdvisedSupport(ITestBean.class);
-				//Add no interceptors
-				AopProxy aop = createAopProxy(pc);
-				aop.getProxy();
-		});
-	}
 
 	/**
 	 * Simple test that if we set values we can get them out again.
@@ -1363,7 +1353,7 @@ public abstract class AbstractAopProxyTests {
 			public int sum;
 			@Override
 			public void afterReturning(@Nullable Object returnValue, Method m, Object[] args, @Nullable Object target) throws Throwable {
-				sum += ((Integer) returnValue).intValue();
+				sum += (Integer) returnValue;
 			}
 		}
 		SummingAfterAdvice aa = new SummingAfterAdvice();

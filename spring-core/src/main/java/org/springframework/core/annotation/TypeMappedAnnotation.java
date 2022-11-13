@@ -32,7 +32,6 @@ import java.util.function.Predicate;
 import org.springframework.lang.Nullable;
 import org.springframework.util.Assert;
 import org.springframework.util.ClassUtils;
-import org.springframework.util.ReflectionUtils;
 
 /**
  * {@link MergedAnnotation} that adapts attributes from a root annotation by
@@ -42,9 +41,9 @@ import org.springframework.util.ReflectionUtils;
  * {@code BiFunction}. This allows various different annotation models to be
  * supported by the same class. For example, the attributes source might be an
  * actual {@link Annotation} instance where methods on the annotation instance
- * are {@linkplain ReflectionUtils#invokeMethod(Method, Object) invoked} to extract
- * values. Equally, the source could be a simple {@link Map} with values
- * extracted using {@link Map#get(Object)}.
+ * are {@linkplain AnnotationUtils#invokeAnnotationMethod(Method, Object) invoked}
+ * to extract values. Similarly, the source could be a simple {@link Map} with
+ * values extracted using {@link Map#get(Object)}.
  *
  * <p>Extracted root attribute values must be compatible with the attribute
  * return type, namely:
@@ -320,17 +319,6 @@ final class TypeMappedAnnotation<A extends Annotation> extends AbstractMergedAnn
 	}
 
 	@Override
-	public boolean isSynthesizable() {
-		// Is this a mapped annotation for a composed annotation, and are there
-		// annotation attributes (mirrors) that need to be merged?
-		if (getDistance() > 0 && this.resolvedMirrors.length > 0) {
-			return true;
-		}
-		// Is the mapped annotation itself synthesizable?
-		return this.mapping.isSynthesizable();
-	}
-
-	@Override
 	@SuppressWarnings("unchecked")
 	protected A createSynthesizedAnnotation() {
 		// Check root annotation
@@ -358,15 +346,22 @@ final class TypeMappedAnnotation<A extends Annotation> extends AbstractMergedAnn
 	 * Determine if the supplied annotation has not already been synthesized
 	 * <strong>and</strong> whether the mapped annotation is a composed annotation
 	 * that needs to have its attributes merged or the mapped annotation is
-	 * {@linkplain #isSynthesizable() synthesizable} in general.
+	 * {@linkplain AnnotationTypeMapping#isSynthesizable() synthesizable} in general.
 	 * @param annotation the annotation to check
 	 * @since 5.3.22
 	 */
 	private boolean isSynthesizable(Annotation annotation) {
+		// Already synthesized?
 		if (AnnotationUtils.isSynthesizedAnnotation(annotation)) {
 			return false;
 		}
-		return isSynthesizable();
+		// Is this a mapped annotation for a composed annotation, and are there
+		// annotation attributes (mirrors) that need to be merged?
+		if (getDistance() > 0 && this.resolvedMirrors.length > 0) {
+			return true;
+		}
+		// Is the mapped annotation itself synthesizable?
+		return this.mapping.isSynthesizable();
 	}
 
 	@Override
@@ -431,7 +426,7 @@ final class TypeMappedAnnotation<A extends Annotation> extends AbstractMergedAnn
 		}
 		if (value == null) {
 			Method attribute = this.mapping.getAttributes().get(attributeIndex);
-			value = ReflectionUtils.invokeMethod(attribute, this.mapping.getAnnotation());
+			value = AnnotationUtils.invokeAnnotationMethod(attribute, this.mapping.getAnnotation());
 		}
 		return value;
 	}
@@ -549,7 +544,7 @@ final class TypeMappedAnnotation<A extends Annotation> extends AbstractMergedAnn
 
 	private ValueExtractor getValueExtractor(Object value) {
 		if (value instanceof Annotation) {
-			return ReflectionUtils::invokeMethod;
+			return AnnotationUtils::invokeAnnotationMethod;
 		}
 		if (value instanceof Map) {
 			return TypeMappedAnnotation::extractFromMap;
@@ -609,7 +604,8 @@ final class TypeMappedAnnotation<A extends Annotation> extends AbstractMergedAnn
 	static <A extends Annotation> MergedAnnotation<A> from(@Nullable Object source, A annotation) {
 		Assert.notNull(annotation, "Annotation must not be null");
 		AnnotationTypeMappings mappings = AnnotationTypeMappings.forAnnotationType(annotation.annotationType());
-		return new TypeMappedAnnotation<>(mappings.get(0), null, source, annotation, ReflectionUtils::invokeMethod, 0);
+		return new TypeMappedAnnotation<>(
+				mappings.get(0), null, source, annotation, AnnotationUtils::invokeAnnotationMethod, 0);
 	}
 
 	static <A extends Annotation> MergedAnnotation<A> of(
@@ -642,7 +638,7 @@ final class TypeMappedAnnotation<A extends Annotation> extends AbstractMergedAnn
 			int aggregateIndex, IntrospectionFailureLogger logger) {
 
 		return createIfPossible(mapping, source, annotation,
-				ReflectionUtils::invokeMethod, aggregateIndex, logger);
+				AnnotationUtils::invokeAnnotationMethod, aggregateIndex, logger);
 	}
 
 	@Nullable

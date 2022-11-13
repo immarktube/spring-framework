@@ -23,6 +23,8 @@ import java.util.function.Function;
 
 import org.springframework.context.ApplicationContext;
 import org.springframework.context.ConfigurableApplicationContext;
+import org.springframework.core.style.DefaultToStringStyler;
+import org.springframework.core.style.SimpleValueStyler;
 import org.springframework.core.style.ToStringCreator;
 import org.springframework.lang.Nullable;
 import org.springframework.test.annotation.DirtiesContext.HierarchyMode;
@@ -40,6 +42,7 @@ import org.springframework.util.StringUtils;
  * @author Rob Harrop
  * @since 4.0
  */
+@SuppressWarnings("serial")
 public class DefaultTestContext implements TestContext {
 
 	private static final long serialVersionUID = -5827157174866681233L;
@@ -237,7 +240,7 @@ public class DefaultTestContext implements TestContext {
 	 */
 	@Override
 	public String toString() {
-		return new ToStringCreator(this)
+		return new ToStringCreator(this, new DefaultToStringStyler(new SimpleValueStyler()))
 				.append("testClass", this.testClass)
 				.append("testInstance", this.testInstance)
 				.append("testMethod", this.testMethod)

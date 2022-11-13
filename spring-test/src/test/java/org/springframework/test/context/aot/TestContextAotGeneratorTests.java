@@ -22,26 +22,34 @@ import java.util.List;
 import java.util.Set;
 import java.util.stream.Stream;
 
+import javax.sql.DataSource;
+
 import org.junit.jupiter.api.Test;
 
+import org.springframework.aot.AotDetector;
 import org.springframework.aot.generate.DefaultGenerationContext;
 import org.springframework.aot.generate.GeneratedFiles.Kind;
 import org.springframework.aot.generate.InMemoryGeneratedFiles;
 import org.springframework.aot.hint.MemberCategory;
 import org.springframework.aot.hint.RuntimeHints;
 import org.springframework.aot.hint.TypeReference;
-import org.springframework.aot.test.generator.compile.CompileWithTargetClassAccess;
-import org.springframework.aot.test.generator.compile.TestCompiler;
+import org.springframework.aot.test.generate.CompilerFiles;
 import org.springframework.context.ApplicationContext;
 import org.springframework.context.ApplicationContextInitializer;
 import org.springframework.context.ConfigurableApplicationContext;
+import org.springframework.core.env.Profiles;
+import org.springframework.core.test.tools.CompileWithForkedClassLoader;
+import org.springframework.core.test.tools.TestCompiler;
 import org.springframework.javapoet.ClassName;
+import org.springframework.test.context.BootstrapUtils;
 import org.springframework.test.context.MergedContextConfiguration;
+import org.springframework.test.context.TestContextBootstrapper;
 import org.springframework.test.context.aot.samples.basic.BasicSpringJupiterSharedConfigTests;
 import org.springframework.test.context.aot.samples.basic.BasicSpringJupiterTests;
 import org.springframework.test.context.aot.samples.basic.BasicSpringTestNGTests;
 import org.springframework.test.context.aot.samples.basic.BasicSpringVintageTests;
 import org.springframework.test.context.aot.samples.common.MessageService;
+import org.springframework.test.context.aot.samples.jdbc.SqlScriptsSpringJupiterTests;
 import org.springframework.test.context.aot.samples.web.WebSpringJupiterTests;
 import org.springframework.test.context.aot.samples.web.WebSpringTestNGTests;
 import org.springframework.test.context.aot.samples.web.WebSpringVintageTests;
@@ -54,6 +62,7 @@ import org.springframework.web.context.WebApplicationContext;
 
 import static java.util.Comparator.comparing;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatExceptionOfType;
 import static org.springframework.aot.hint.MemberCategory.INVOKE_DECLARED_CONSTRUCTORS;
 import static org.springframework.aot.hint.MemberCategory.INVOKE_DECLARED_METHODS;
 import static org.springframework.aot.hint.MemberCategory.INVOKE_PUBLIC_CONSTRUCTORS;
@@ -66,26 +75,29 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.setup.MockMvcBuilders.webAppContextSetup;
 
 /**
- * Tests for {@link TestContextAotGenerator}, {@link AotTestMappings},
- * {@link AotContextLoader}, and run-time hints.
+ * Tests for {@link TestContextAotGenerator}, {@link AotTestContextInitializers},
+ * {@link AotTestAttributes}, {@link AotContextLoader}, and run-time hints.
  *
  * @author Sam Brannen
  * @since 6.0
  */
-@CompileWithTargetClassAccess
+@CompileWithForkedClassLoader
 class TestContextAotGeneratorTests extends AbstractAotTests {
 
 	/**
-	 * @see AotIntegrationTests#endToEndTests()
+	 * End-to-end tests within the scope of the {@link TestContextAotGenerator}.
+	 *
+	 * @see AotIntegrationTests
 	 */
 	@Test
-	void processAheadOfTimeAndGenerateAotTestMappings() {
+	void endToEndTests() {
 		Set<Class<?>> testClasses = Set.of(
 				BasicSpringJupiterSharedConfigTests.class,
 				BasicSpringJupiterTests.class,
 				BasicSpringJupiterTests.NestedTests.class,
 				BasicSpringTestNGTests.class,
 				BasicSpringVintageTests.class,
+				SqlScriptsSpringJupiterTests.class,
 				XmlSpringJupiterTests.class,
 				WebSpringJupiterTests.class);
 
@@ -99,27 +111,52 @@ class TestContextAotGeneratorTests extends AbstractAotTests {
 		List<String> sourceFiles = generatedFiles.getGeneratedFiles(Kind.SOURCE).keySet().stream().toList();
 		assertThat(sourceFiles).containsExactlyInAnyOrder(expectedSourceFiles);
 
-		TestCompiler.forSystem().withFiles(generatedFiles).compile(ThrowingConsumer.of(compiled -> {
-			AotTestMappings aotTestMappings = new AotTestMappings();
-			for (Class<?> testClass : testClasses) {
-				MergedContextConfiguration mergedConfig = generator.buildMergedContextConfiguration(testClass);
-				ApplicationContextInitializer<ConfigurableApplicationContext> contextInitializer =
-						aotTestMappings.getContextInitializer(testClass);
-				assertThat(contextInitializer).isNotNull();
-				ApplicationContext context = ((AotContextLoader) mergedConfig.getContextLoader())
-						.loadContextForAotRuntime(mergedConfig, contextInitializer);
-				if (context instanceof WebApplicationContext wac) {
-					assertContextForBasicWebTests(wac);
+		TestCompiler.forSystem().with(CompilerFiles.from(generatedFiles)).compile(ThrowingConsumer.of(compiled -> {
+			try {
+				System.setProperty(AotDetector.AOT_ENABLED, "true");
+				AotTestAttributesFactory.reset();
+				AotTestContextInitializersFactory.reset();
+
+				AotTestAttributes aotAttributes = AotTestAttributes.getInstance();
+				assertThatExceptionOfType(UnsupportedOperationException.class)
+					.isThrownBy(() -> aotAttributes.setAttribute("foo", "bar"))
+					.withMessage("AOT attributes cannot be modified during AOT run-time execution");
+				String key = "@SpringBootConfiguration-" + BasicSpringVintageTests.class.getName();
+				assertThat(aotAttributes.getString(key)).isEqualTo("org.example.Main");
+				assertThat(aotAttributes.getBoolean(key + "-active1")).isTrue();
+				assertThat(aotAttributes.getBoolean(key + "-active2")).isTrue();
+				assertThat(aotAttributes.getString("bogus")).isNull();
+				assertThat(aotAttributes.getBoolean("bogus")).isFalse();
+
+				AotTestContextInitializers aotContextInitializers = new AotTestContextInitializers();
+				for (Class<?> testClass : testClasses) {
+					MergedContextConfiguration mergedConfig = buildMergedContextConfiguration(testClass);
+					ApplicationContextInitializer<ConfigurableApplicationContext> contextInitializer =
+							aotContextInitializers.getContextInitializer(testClass);
+					assertThat(contextInitializer).isNotNull();
+					ApplicationContext context = ((AotContextLoader) mergedConfig.getContextLoader())
+							.loadContextForAotRuntime(mergedConfig, contextInitializer);
+					if (context instanceof WebApplicationContext wac) {
+						assertContextForWebTests(wac);
+					}
+					else if (testClass.getPackageName().contains("jdbc")) {
+						assertContextForJdbcTests(context);
+					}
+					else {
+						assertContextForBasicTests(context);
+					}
 				}
-				else {
-					assertContextForBasicTests(context);
-				}
+			}
+			finally {
+				System.clearProperty(AotDetector.AOT_ENABLED);
+				AotTestAttributesFactory.reset();
 			}
 		}));
 	}
 
 	private static void assertRuntimeHints(RuntimeHints runtimeHints) {
-		assertReflectionRegistered(runtimeHints, AotTestMappings.GENERATED_MAPPINGS_CLASS_NAME, INVOKE_PUBLIC_METHODS);
+		assertReflectionRegistered(runtimeHints, AotTestContextInitializersCodeGenerator.GENERATED_MAPPINGS_CLASS_NAME, INVOKE_PUBLIC_METHODS);
+		assertReflectionRegistered(runtimeHints, AotTestAttributesCodeGenerator.GENERATED_ATTRIBUTES_CLASS_NAME, INVOKE_PUBLIC_METHODS);
 
 		Stream.of(
 			org.springframework.test.context.cache.DefaultCacheAwareContextLoaderDelegate.class,
@@ -156,20 +193,37 @@ class TestContextAotGeneratorTests extends AbstractAotTests {
 		// ContextCustomizerFactory
 		Stream.of(
 			"org.springframework.test.context.support.DynamicPropertiesContextCustomizerFactory",
-			"org.springframework.test.context.web.socket.MockServerContainerContextCustomizerFactory"
+			"org.springframework.test.context.web.socket.MockServerContainerContextCustomizerFactory",
+			"org.springframework.test.context.aot.samples.basic.ImportsContextCustomizerFactory"
 		).forEach(type -> assertReflectionRegistered(runtimeHints, type, INVOKE_DECLARED_CONSTRUCTORS));
 
 		Stream.of(
 			// @BootstrapWith
 			org.springframework.test.context.aot.samples.basic.BasicSpringVintageTests.CustomXmlBootstrapper.class,
-			// @ContextConfiguration(initializers=...)
+			// @ContextConfiguration(initializers = ...)
 			org.springframework.test.context.aot.samples.basic.BasicSpringTestNGTests.CustomInitializer.class,
-			// @ContextConfiguration(loader=...)
-			org.springframework.test.context.support.AnnotationConfigContextLoader.class
+			// @ContextConfiguration(loader = ...)
+			org.springframework.test.context.support.AnnotationConfigContextLoader.class,
+			// @ActiveProfiles(resolver = ...)
+			org.springframework.test.context.aot.samples.basic.SpanishActiveProfilesResolver.class
 		).forEach(type -> assertReflectionRegistered(runtimeHints, type, INVOKE_DECLARED_CONSTRUCTORS));
 
-		// @ContextConfiguration(locations=...)
-		assertThat(resource().forResource("/org/springframework/test/context/aot/samples/xml/test-config.xml"))
+		// @ContextConfiguration(locations = ...)
+		assertThat(resource().forResource("org/springframework/test/context/aot/samples/xml/test-config.xml"))
+			.accepts(runtimeHints);
+
+		// @TestPropertySource(locations = ...)
+		assertThat(resource().forResource("org/springframework/test/context/aot/samples/basic/BasicSpringVintageTests.properties"))
+			.accepts(runtimeHints);
+
+		// @WebAppConfiguration(value = ...)
+		assertThat(resource().forResource("META-INF/web-resources/resources/Spring.js")).accepts(runtimeHints);
+		assertThat(resource().forResource("META-INF/web-resources/WEB-INF/views/home.jsp")).accepts(runtimeHints);
+
+		// @Sql(scripts = ...)
+		assertThat(resource().forResource("org/springframework/test/context/jdbc/schema.sql"))
+			.accepts(runtimeHints);
+		assertThat(resource().forResource("org/springframework/test/context/aot/samples/jdbc/SqlScriptsSpringJupiterTests.test.sql"))
 			.accepts(runtimeHints);
 	}
 
@@ -208,10 +262,18 @@ class TestContextAotGeneratorTests extends AbstractAotTests {
 		assertThat(context.getEnvironment().getProperty("test.engine")).as("Environment").isNotNull();
 
 		MessageService messageService = context.getBean(MessageService.class);
-		assertThat(messageService.generateMessage()).isEqualTo("Hello, AOT!");
+		ConfigurableApplicationContext cac = (ConfigurableApplicationContext) context;
+		String expectedMessage = cac.getEnvironment().acceptsProfiles(Profiles.of("spanish")) ?
+				"¡Hola, AOT!" : "Hello, AOT!";
+		assertThat(messageService.generateMessage()).isEqualTo(expectedMessage);
 	}
 
-	private void assertContextForBasicWebTests(WebApplicationContext wac) throws Exception {
+	private void assertContextForJdbcTests(ApplicationContext context) throws Exception {
+		assertThat(context.getEnvironment().getProperty("test.engine")).as("Environment").isNotNull();
+		assertThat(context.getBean(DataSource.class)).as("DataSource").isNotNull();
+	}
+
+	private void assertContextForWebTests(WebApplicationContext wac) throws Exception {
 		assertThat(wac.getEnvironment().getProperty("test.engine")).as("Environment").isNotNull();
 
 		MockMvc mockMvc = webAppContextSetup(wac).build();
@@ -261,7 +323,7 @@ class TestContextAotGeneratorTests extends AbstractAotTests {
 		InMemoryGeneratedFiles generatedFiles = new InMemoryGeneratedFiles();
 		TestContextAotGenerator generator = new TestContextAotGenerator(generatedFiles);
 		List<Mapping> mappings = processAheadOfTime(generator, testClasses);
-		TestCompiler.forSystem().withFiles(generatedFiles).compile(ThrowingConsumer.of(compiled -> {
+		TestCompiler.forSystem().with(CompilerFiles.from(generatedFiles)).compile(ThrowingConsumer.of(compiled -> {
 			for (Mapping mapping : mappings) {
 				MergedContextConfiguration mergedConfig = mapping.mergedConfig();
 				ApplicationContextInitializer<ConfigurableApplicationContext> contextInitializer =
@@ -277,7 +339,7 @@ class TestContextAotGeneratorTests extends AbstractAotTests {
 		List<Mapping> mappings = new ArrayList<>();
 		testClasses.forEach(testClass -> {
 			DefaultGenerationContext generationContext = generator.createGenerationContext(testClass);
-			MergedContextConfiguration mergedConfig = generator.buildMergedContextConfiguration(testClass);
+			MergedContextConfiguration mergedConfig = buildMergedContextConfiguration(testClass);
 			ClassName className = generator.processAheadOfTime(mergedConfig, generationContext);
 			assertThat(className).isNotNull();
 			mappings.add(new Mapping(mergedConfig, className));
@@ -287,12 +349,18 @@ class TestContextAotGeneratorTests extends AbstractAotTests {
 	}
 
 
+	private static MergedContextConfiguration buildMergedContextConfiguration(Class<?> testClass) {
+		TestContextBootstrapper testContextBootstrapper = BootstrapUtils.resolveTestContextBootstrapper(testClass);
+		return testContextBootstrapper.buildMergedContextConfiguration();
+	}
+
 	record Mapping(MergedContextConfiguration mergedConfig, ClassName className) {
 	}
 
 	private static final String[] expectedSourceFiles = {
 			// Global
-			"org/springframework/test/context/aot/AotTestMappings__Generated.java",
+			"org/springframework/test/context/aot/AotTestContextInitializers__Generated.java",
+			"org/springframework/test/context/aot/AotTestAttributes__Generated.java",
 			// BasicSpringJupiterSharedConfigTests
 			"org/springframework/context/event/DefaultEventListenerFactory__TestContext001_BeanDefinitions.java",
 			"org/springframework/context/event/EventListenerMethodProcessor__TestContext001_BeanDefinitions.java",
@@ -318,21 +386,27 @@ class TestContextAotGeneratorTests extends AbstractAotTests {
 			"org/springframework/test/context/aot/samples/basic/BasicSpringVintageTests__TestContext004_ApplicationContextInitializer.java",
 			"org/springframework/test/context/aot/samples/basic/BasicSpringVintageTests__TestContext004_BeanFactoryRegistrations.java",
 			"org/springframework/test/context/aot/samples/basic/BasicTestConfiguration__TestContext004_BeanDefinitions.java",
-			// WebSpringJupiterTests
+			// SqlScriptsSpringJupiterTests
 			"org/springframework/context/event/DefaultEventListenerFactory__TestContext005_BeanDefinitions.java",
 			"org/springframework/context/event/EventListenerMethodProcessor__TestContext005_BeanDefinitions.java",
-			"org/springframework/test/context/aot/samples/web/WebSpringJupiterTests__TestContext005_ApplicationContextInitializer.java",
-			"org/springframework/test/context/aot/samples/web/WebSpringJupiterTests__TestContext005_BeanFactoryRegistrations.java",
-			"org/springframework/test/context/aot/samples/web/WebTestConfiguration__TestContext005_BeanDefinitions.java",
-			"org/springframework/web/reactive/config/DelegatingWebFluxConfiguration__TestContext005_Autowiring.java",
-			"org/springframework/web/reactive/config/DelegatingWebFluxConfiguration__TestContext005_BeanDefinitions.java",
-			"org/springframework/web/reactive/config/WebFluxConfigurationSupport__TestContext005_BeanDefinitions.java",
-			// XmlSpringJupiterTests
+			"org/springframework/test/context/aot/samples/jdbc/SqlScriptsSpringJupiterTests__TestContext005_ApplicationContextInitializer.java",
+			"org/springframework/test/context/aot/samples/jdbc/SqlScriptsSpringJupiterTests__TestContext005_BeanFactoryRegistrations.java",
+			"org/springframework/test/context/jdbc/EmptyDatabaseConfig__TestContext005_BeanDefinitions.java",
+			// WebSpringJupiterTests
 			"org/springframework/context/event/DefaultEventListenerFactory__TestContext006_BeanDefinitions.java",
 			"org/springframework/context/event/EventListenerMethodProcessor__TestContext006_BeanDefinitions.java",
-			"org/springframework/test/context/aot/samples/common/DefaultMessageService__TestContext006_BeanDefinitions.java",
-			"org/springframework/test/context/aot/samples/xml/XmlSpringJupiterTests__TestContext006_ApplicationContextInitializer.java",
-			"org/springframework/test/context/aot/samples/xml/XmlSpringJupiterTests__TestContext006_BeanFactoryRegistrations.java"
+			"org/springframework/test/context/aot/samples/web/WebSpringJupiterTests__TestContext006_ApplicationContextInitializer.java",
+			"org/springframework/test/context/aot/samples/web/WebSpringJupiterTests__TestContext006_BeanFactoryRegistrations.java",
+			"org/springframework/test/context/aot/samples/web/WebTestConfiguration__TestContext006_BeanDefinitions.java",
+			"org/springframework/web/servlet/config/annotation/DelegatingWebMvcConfiguration__TestContext006_Autowiring.java",
+			"org/springframework/web/servlet/config/annotation/DelegatingWebMvcConfiguration__TestContext006_BeanDefinitions.java",
+			"org/springframework/web/servlet/config/annotation/WebMvcConfigurationSupport__TestContext006_BeanDefinitions.java",
+			// XmlSpringJupiterTests
+			"org/springframework/context/event/DefaultEventListenerFactory__TestContext007_BeanDefinitions.java",
+			"org/springframework/context/event/EventListenerMethodProcessor__TestContext007_BeanDefinitions.java",
+			"org/springframework/test/context/aot/samples/common/DefaultMessageService__TestContext007_BeanDefinitions.java",
+			"org/springframework/test/context/aot/samples/xml/XmlSpringJupiterTests__TestContext007_ApplicationContextInitializer.java",
+			"org/springframework/test/context/aot/samples/xml/XmlSpringJupiterTests__TestContext007_BeanFactoryRegistrations.java"
 		};
 
 }

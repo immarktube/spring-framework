@@ -729,19 +729,12 @@ public class DefaultListableBeanFactory extends AbstractAutowireCapableBeanFacto
 			String beanName, Class<A> annotationType, boolean allowFactoryBeanInit)
 			throws NoSuchBeanDefinitionException {
 
-		return findMergedAnnotationOnBean(beanName, annotationType, allowFactoryBeanInit)
-				.synthesize(MergedAnnotation::isPresent).orElse(null);
-	}
-
-	private <A extends Annotation> MergedAnnotation<A> findMergedAnnotationOnBean(
-			String beanName, Class<A> annotationType, boolean allowFactoryBeanInit) {
-
 		Class<?> beanType = getType(beanName, allowFactoryBeanInit);
 		if (beanType != null) {
 			MergedAnnotation<A> annotation =
 					MergedAnnotations.from(beanType, SearchStrategy.TYPE_HIERARCHY).get(annotationType);
 			if (annotation.isPresent()) {
-				return annotation;
+				return annotation.synthesize();
 			}
 		}
 		if (containsBeanDefinition(beanName)) {
@@ -753,7 +746,7 @@ public class DefaultListableBeanFactory extends AbstractAutowireCapableBeanFacto
 					MergedAnnotation<A> annotation =
 							MergedAnnotations.from(beanClass, SearchStrategy.TYPE_HIERARCHY).get(annotationType);
 					if (annotation.isPresent()) {
-						return annotation;
+						return annotation.synthesize();
 					}
 				}
 			}
@@ -763,11 +756,48 @@ public class DefaultListableBeanFactory extends AbstractAutowireCapableBeanFacto
 				MergedAnnotation<A> annotation =
 						MergedAnnotations.from(factoryMethod, SearchStrategy.TYPE_HIERARCHY).get(annotationType);
 				if (annotation.isPresent()) {
-					return annotation;
+					return annotation.synthesize();
 				}
 			}
 		}
-		return MergedAnnotation.missing();
+		return null;
+	}
+
+	@Override
+	public <A extends Annotation> Set<A> findAllAnnotationsOnBean(
+			String beanName, Class<A> annotationType, boolean allowFactoryBeanInit)
+			throws NoSuchBeanDefinitionException {
+
+		Set<A> annotations = new LinkedHashSet<>();
+		Class<?> beanType = getType(beanName, allowFactoryBeanInit);
+		if (beanType != null) {
+			MergedAnnotations.from(beanType, MergedAnnotations.SearchStrategy.TYPE_HIERARCHY)
+					.stream(annotationType)
+					.filter(MergedAnnotation::isPresent)
+					.forEach(mergedAnnotation -> annotations.add(mergedAnnotation.synthesize()));
+		}
+		if (containsBeanDefinition(beanName)) {
+			RootBeanDefinition bd = getMergedLocalBeanDefinition(beanName);
+			// Check raw bean class, e.g. in case of a proxy.
+			if (bd.hasBeanClass() && bd.getFactoryMethodName() == null) {
+				Class<?> beanClass = bd.getBeanClass();
+				if (beanClass != beanType) {
+					MergedAnnotations.from(beanClass, MergedAnnotations.SearchStrategy.TYPE_HIERARCHY)
+							.stream(annotationType)
+							.filter(MergedAnnotation::isPresent)
+							.forEach(mergedAnnotation -> annotations.add(mergedAnnotation.synthesize()));
+				}
+			}
+			// Check annotations declared on factory method, if any.
+			Method factoryMethod = bd.getResolvedFactoryMethod();
+			if (factoryMethod != null) {
+				MergedAnnotations.from(factoryMethod, MergedAnnotations.SearchStrategy.TYPE_HIERARCHY)
+						.stream(annotationType)
+						.filter(MergedAnnotation::isPresent)
+						.forEach(mergedAnnotation -> annotations.add(mergedAnnotation.synthesize()));
+			}
+		}
+		return annotations;
 	}
 
 
@@ -2149,20 +2179,25 @@ public class DefaultListableBeanFactory extends AbstractAutowireCapableBeanFacto
 		@Nullable
 		public Object getOrderSource(Object obj) {
 			String beanName = this.instancesToBeanNames.get(obj);
-			if (beanName == null || !containsBeanDefinition(beanName)) {
+			if (beanName == null) {
 				return null;
 			}
-			RootBeanDefinition beanDefinition = getMergedLocalBeanDefinition(beanName);
-			List<Object> sources = new ArrayList<>(2);
-			Method factoryMethod = beanDefinition.getResolvedFactoryMethod();
-			if (factoryMethod != null) {
-				sources.add(factoryMethod);
+			try {
+				RootBeanDefinition beanDefinition = (RootBeanDefinition) getMergedBeanDefinition(beanName);
+				List<Object> sources = new ArrayList<>(2);
+				Method factoryMethod = beanDefinition.getResolvedFactoryMethod();
+				if (factoryMethod != null) {
+					sources.add(factoryMethod);
+				}
+				Class<?> targetType = beanDefinition.getTargetType();
+				if (targetType != null && targetType != obj.getClass()) {
+					sources.add(targetType);
+				}
+				return sources.toArray();
 			}
-			Class<?> targetType = beanDefinition.getTargetType();
-			if (targetType != null && targetType != obj.getClass()) {
-				sources.add(targetType);
+			catch (NoSuchBeanDefinitionException ex) {
+				return null;
 			}
-			return sources.toArray();
 		}
 	}
 

@@ -69,7 +69,6 @@ import org.springframework.context.weaving.LoadTimeWeaverAware;
 import org.springframework.context.weaving.LoadTimeWeaverAwareProcessor;
 import org.springframework.core.NativeDetector;
 import org.springframework.core.ResolvableType;
-import org.springframework.core.SpringProperties;
 import org.springframework.core.annotation.AnnotationUtils;
 import org.springframework.core.convert.ConversionService;
 import org.springframework.core.env.ConfigurableEnvironment;
@@ -158,13 +157,6 @@ public abstract class AbstractApplicationContext extends DefaultResourceLoader
 	 * @see org.springframework.context.event.SimpleApplicationEventMulticaster
 	 */
 	public static final String APPLICATION_EVENT_MULTICASTER_BEAN_NAME = "applicationEventMulticaster";
-
-	/**
-	 * Boolean flag controlled by a {@code spring.spel.ignore} system property that instructs Spring to
-	 * ignore SpEL, i.e. to not initialize the SpEL infrastructure.
-	 * <p>The default is "false".
-	 */
-	private static final boolean shouldIgnoreSpel = SpringProperties.getFlag("spring.spel.ignore");
 
 
 	static {
@@ -689,9 +681,7 @@ public abstract class AbstractApplicationContext extends DefaultResourceLoader
 	protected void prepareBeanFactory(ConfigurableListableBeanFactory beanFactory) {
 		// Tell the internal bean factory to use the context's class loader etc.
 		beanFactory.setBeanClassLoader(getClassLoader());
-		if (!shouldIgnoreSpel) {
-			beanFactory.setBeanExpressionResolver(new StandardBeanExpressionResolver(beanFactory.getBeanClassLoader()));
-		}
+		beanFactory.setBeanExpressionResolver(new StandardBeanExpressionResolver(beanFactory.getBeanClassLoader()));
 		beanFactory.addPropertyEditorRegistrar(new ResourceEditorRegistrar(this, getEnvironment()));
 
 		// Configure the bean factory with context callbacks.
@@ -1326,6 +1316,15 @@ public abstract class AbstractApplicationContext extends DefaultResourceLoader
 
 		assertBeanFactoryActive();
 		return getBeanFactory().findAnnotationOnBean(beanName, annotationType, allowFactoryBeanInit);
+	}
+
+	@Override
+	public <A extends Annotation> Set<A> findAllAnnotationsOnBean(
+			String beanName, Class<A> annotationType, boolean allowFactoryBeanInit)
+			throws NoSuchBeanDefinitionException {
+
+		assertBeanFactoryActive();
+		return getBeanFactory().findAllAnnotationsOnBean(beanName, annotationType, allowFactoryBeanInit);
 	}
 
 

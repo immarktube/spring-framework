@@ -21,9 +21,10 @@ import java.lang.reflect.Executable;
 import java.util.List;
 import java.util.function.Predicate;
 
-import org.springframework.aot.generate.AccessVisibility;
+import org.springframework.aot.generate.AccessControl;
 import org.springframework.aot.generate.GenerationContext;
 import org.springframework.aot.generate.MethodReference;
+import org.springframework.aot.generate.MethodReference.ArgumentCodeGenerator;
 import org.springframework.beans.factory.FactoryBean;
 import org.springframework.beans.factory.config.BeanDefinition;
 import org.springframework.beans.factory.config.BeanDefinitionHolder;
@@ -31,6 +32,7 @@ import org.springframework.beans.factory.support.InstanceSupplier;
 import org.springframework.beans.factory.support.RegisteredBean;
 import org.springframework.beans.factory.support.RootBeanDefinition;
 import org.springframework.core.ResolvableType;
+import org.springframework.javapoet.ClassName;
 import org.springframework.javapoet.CodeBlock;
 import org.springframework.javapoet.ParameterizedTypeName;
 import org.springframework.lang.Nullable;
@@ -43,7 +45,7 @@ import org.springframework.util.ClassUtils;
  *
  * @author Phillip Webb
  */
-class DefaultBeanRegistrationCodeFragments extends BeanRegistrationCodeFragments {
+class DefaultBeanRegistrationCodeFragments implements BeanRegistrationCodeFragments {
 
 	/**
 	 * The variable name used to hold the bean type.
@@ -69,21 +71,22 @@ class DefaultBeanRegistrationCodeFragments extends BeanRegistrationCodeFragments
 
 
 	@Override
-	public Class<?> getTarget(RegisteredBean registeredBean,
+	public ClassName getTarget(RegisteredBean registeredBean,
 			Executable constructorOrFactoryMethod) {
 
-		Class<?> target = extractDeclaringClass(registeredBean.getBeanType(),
-				constructorOrFactoryMethod);
+		Class<?> target = extractDeclaringClass(registeredBean.getBeanType(), constructorOrFactoryMethod);
 		while (target.getName().startsWith("java.") && registeredBean.isInnerBean()) {
-			target = registeredBean.getParent().getBeanClass();
+			RegisteredBean parent = registeredBean.getParent();
+			Assert.state(parent != null, "No parent available for inner bean");
+			target = parent.getBeanClass();
 		}
-		return target;
+		return ClassName.get(target);
 	}
 
 	private Class<?> extractDeclaringClass(ResolvableType beanType, Executable executable) {
 		Class<?> declaringClass = ClassUtils.getUserClass(executable.getDeclaringClass());
 		if (executable instanceof Constructor<?>
-				&& AccessVisibility.forMember(executable) == AccessVisibility.PUBLIC
+				&& AccessControl.forMember(executable).isPublic()
 				&& FactoryBean.class.isAssignableFrom(declaringClass)) {
 			return extractTargetClassFromFactoryBean(declaringClass, beanType);
 		}
@@ -100,8 +103,7 @@ class DefaultBeanRegistrationCodeFragments extends BeanRegistrationCodeFragments
 	 * @return the target class to use
 	 */
 	private Class<?> extractTargetClassFromFactoryBean(Class<?> factoryBeanType, ResolvableType beanType) {
-		ResolvableType target = ResolvableType.forType(factoryBeanType)
-				.as(FactoryBean.class).getGeneric(0);
+		ResolvableType target = ResolvableType.forType(factoryBeanType).as(FactoryBean.class).getGeneric(0);
 		if (target.getType().equals(Class.class)) {
 			return target.toClass();
 		}
@@ -154,9 +156,8 @@ class DefaultBeanRegistrationCodeFragments extends BeanRegistrationCodeFragments
 					.getBeanDefinitionMethodGenerator(innerRegisteredBean, name);
 			Assert.state(methodGenerator != null, "Unexpected filtering of inner-bean");
 			MethodReference generatedMethod = methodGenerator
-					.generateBeanDefinitionMethod(generationContext,
-							this.beanRegistrationsCode);
-			return generatedMethod.toInvokeCodeBlock();
+					.generateBeanDefinitionMethod(generationContext, this.beanRegistrationsCode);
+			return generatedMethod.toInvokeCodeBlock(ArgumentCodeGenerator.none());
 		}
 		return null;
 	}
@@ -180,13 +181,11 @@ class DefaultBeanRegistrationCodeFragments extends BeanRegistrationCodeFragments
 
 		CodeBlock.Builder code = CodeBlock.builder();
 		if (postProcessors.isEmpty()) {
-			code.addStatement("$L.setInstanceSupplier($L)", BEAN_DEFINITION_VARIABLE,
-					instanceSupplierCode);
+			code.addStatement("$L.setInstanceSupplier($L)", BEAN_DEFINITION_VARIABLE, instanceSupplierCode);
 			return code.build();
 		}
 		code.addStatement("$T $L = $L",
-				ParameterizedTypeName.get(InstanceSupplier.class,
-						this.registeredBean.getBeanClass()),
+				ParameterizedTypeName.get(InstanceSupplier.class, this.registeredBean.getBeanClass()),
 				INSTANCE_SUPPLIER_VARIABLE, instanceSupplierCode);
 		for (MethodReference postProcessor : postProcessors) {
 			code.addStatement("$L = $L.andThen($L)", INSTANCE_SUPPLIER_VARIABLE,
@@ -203,8 +202,7 @@ class DefaultBeanRegistrationCodeFragments extends BeanRegistrationCodeFragments
 			Executable constructorOrFactoryMethod, boolean allowDirectSupplierShortcut) {
 
 		return new InstanceSupplierCodeGenerator(generationContext,
-				beanRegistrationCode.getClassName(),
-				beanRegistrationCode.getMethods(), allowDirectSupplierShortcut)
+				beanRegistrationCode.getClassName(), beanRegistrationCode.getMethods(), allowDirectSupplierShortcut)
 				.generateCode(this.registeredBean, constructorOrFactoryMethod);
 	}
 

@@ -21,9 +21,12 @@ import java.lang.reflect.Constructor;
 import java.lang.reflect.Proxy;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Consumer;
 import java.util.function.Supplier;
 
+import org.springframework.aot.hint.MemberCategory;
 import org.springframework.aot.hint.RuntimeHints;
+import org.springframework.aot.hint.TypeHint.Builder;
 import org.springframework.beans.BeanUtils;
 import org.springframework.beans.BeansException;
 import org.springframework.beans.factory.BeanDefinitionStoreException;
@@ -46,6 +49,7 @@ import org.springframework.core.io.support.ResourcePatternResolver;
 import org.springframework.core.metrics.ApplicationStartup;
 import org.springframework.lang.Nullable;
 import org.springframework.util.Assert;
+import org.springframework.util.ClassUtils;
 
 /**
  * Generic ApplicationContext implementation that holds a single internal
@@ -106,6 +110,15 @@ import org.springframework.util.Assert;
  * @see org.springframework.beans.factory.support.PropertiesBeanDefinitionReader
  */
 public class GenericApplicationContext extends AbstractApplicationContext implements BeanDefinitionRegistry {
+
+	private static final Consumer<Builder> asClassBasedProxy = hint ->
+			hint.withMembers(MemberCategory.INVOKE_DECLARED_CONSTRUCTORS,
+					MemberCategory.INVOKE_DECLARED_METHODS,
+					MemberCategory.DECLARED_FIELDS);
+
+	private static final Consumer<Builder> asProxiedUserClass = hint ->
+			hint.withMembers(MemberCategory.INVOKE_PUBLIC_METHODS);
+
 
 	private final DefaultListableBeanFactory beanFactory;
 
@@ -425,15 +438,34 @@ public class GenericApplicationContext extends AbstractApplicationContext implem
 		List<SmartInstantiationAwareBeanPostProcessor> bpps =
 				PostProcessorRegistrationDelegate.loadBeanPostProcessors(
 						this.beanFactory, SmartInstantiationAwareBeanPostProcessor.class);
+
 		for (String beanName : this.beanFactory.getBeanDefinitionNames()) {
 			Class<?> beanType = this.beanFactory.getType(beanName);
 			if (beanType != null) {
+				registerProxyHintIfNecessary(beanType, runtimeHints);
 				for (SmartInstantiationAwareBeanPostProcessor bpp : bpps) {
-					beanType = bpp.determineBeanType(beanType, beanName);
-					if (Proxy.isProxyClass(beanType)) {
-						runtimeHints.proxies().registerJdkProxy(beanType.getInterfaces());
+					Class<?> newBeanType = bpp.determineBeanType(beanType, beanName);
+					if (newBeanType != beanType) {
+						registerProxyHintIfNecessary(newBeanType, runtimeHints);
+						beanType = newBeanType;
 					}
 				}
+			}
+		}
+	}
+
+	private void registerProxyHintIfNecessary(Class<?> beanType, RuntimeHints runtimeHints) {
+		if (Proxy.isProxyClass(beanType)) {
+			// A JDK proxy class needs an explicit hint
+			runtimeHints.proxies().registerJdkProxy(beanType.getInterfaces());
+		}
+		else {
+			// Potentially a CGLIB-generated subclass with reflection hints
+			Class<?> userClass = ClassUtils.getUserClass(beanType);
+			if (userClass != beanType) {
+				runtimeHints.reflection()
+						.registerType(beanType, asClassBasedProxy)
+						.registerType(userClass, asProxiedUserClass);
 			}
 		}
 	}

@@ -20,13 +20,16 @@ import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Arrays;
 import java.util.List;
+import java.util.Set;
 import java.util.stream.Stream;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.CleanupMode;
 import org.junit.jupiter.api.io.TempDir;
 
+import org.springframework.test.context.aot.samples.basic.BasicSpringJupiterImportedConfigTests;
 import org.springframework.test.context.aot.samples.basic.BasicSpringJupiterSharedConfigTests;
 import org.springframework.test.context.aot.samples.basic.BasicSpringJupiterTests;
 import org.springframework.test.context.aot.samples.basic.BasicSpringTestNGTests;
@@ -48,6 +51,7 @@ class TestAotProcessorTests extends AbstractAotTests {
 		// Limit the scope of this test by creating a new classpath root on the fly.
 		Path classpathRoot = Files.createDirectories(tempDir.resolve("build/classes"));
 		Stream.of(
+				BasicSpringJupiterImportedConfigTests.class,
 				BasicSpringJupiterSharedConfigTests.class,
 				BasicSpringJupiterTests.class,
 				BasicSpringJupiterTests.NestedTests.class,
@@ -55,23 +59,22 @@ class TestAotProcessorTests extends AbstractAotTests {
 				BasicSpringVintageTests.class
 			).forEach(testClass -> copy(testClass, classpathRoot));
 
-		Path[] classpathRoots = { classpathRoot };
+		Set<Path> classpathRoots = Set.of(classpathRoot);
 		Path sourceOutput = tempDir.resolve("generated/sources");
 		Path resourceOutput = tempDir.resolve("generated/resources");
 		Path classOutput = tempDir.resolve("generated/classes");
 		String groupId = "org.example";
 		String artifactId = "app-tests";
 
-		TestAotProcessor processor = new TestAotProcessor(classpathRoots, sourceOutput, resourceOutput, classOutput, groupId, artifactId);
+		TestAotProcessor processor =
+				new DemoTestAotProcessor(classpathRoots, sourceOutput, resourceOutput, classOutput, groupId, artifactId);
 		processor.process();
 
-		assertThat(findFiles(sourceOutput)).containsExactlyInAnyOrder(
-				expectedSourceFilesForBasicSpringTests);
+		assertThat(findFiles(sourceOutput)).containsExactlyInAnyOrderElementsOf(expectedSourceFiles());
 
-		assertThat(findFiles(resourceOutput)).contains(
-				"META-INF/native-image/org.example/app-tests/reflect-config.json",
-				"META-INF/native-image/org.example/app-tests/resource-config.json",
-				"META-INF/native-image/org.example/app-tests/proxy-config.json");
+		assertThat(findFiles(resourceOutput.resolve("META-INF/native-image"))).contains(
+				Path.of(groupId, artifactId, "reflect-config.json"),
+				Path.of(groupId, artifactId, "resource-config.json"));
 	}
 
 	private void copy(Class<?> testClass, Path destination) {
@@ -87,13 +90,34 @@ class TestAotProcessorTests extends AbstractAotTests {
 		}
 	}
 
-	private static List<String> findFiles(Path outputPath) throws IOException {
-		int prefixLength = outputPath.toFile().getAbsolutePath().length() + 1;
-		return Files.find(outputPath, Integer.MAX_VALUE, (path, attributes) -> attributes.isRegularFile())
-				.map(Path::toAbsolutePath)
-				.map(Path::toString)
-				.map(path -> path.substring(prefixLength))
-				.toList();
+	private static Stream<Path> findFiles(Path directory) throws IOException {
+		return Files.walk(directory).filter(Files::isRegularFile)
+				.map(path -> path.subpath(directory.getNameCount(), path.getNameCount()));
+	}
+
+	private static List<Path> expectedSourceFiles() {
+		return Arrays.stream(expectedSourceFilesForBasicSpringTests).map(Path::of).toList();
+	}
+
+
+	private static class DemoTestAotProcessor extends TestAotProcessor {
+
+		DemoTestAotProcessor(Set<Path> classpathRoots, Path sourceOutput, Path resourceOutput, Path classOutput,
+				String groupId, String artifactId) {
+			super(classpathRoots, createSettings(sourceOutput, resourceOutput, classOutput, groupId, artifactId));
+		}
+
+		private static Settings createSettings(Path sourceOutput, Path resourceOutput, Path classOutput, String groupId,
+				String artifactId) {
+			return Settings.builder()
+					.sourceOutput(sourceOutput)
+					.resourceOutput(resourceOutput)
+					.classOutput(classOutput)
+					.artifactId(artifactId)
+					.groupId(groupId)
+					.build();
+		}
 	}
 
 }
+
